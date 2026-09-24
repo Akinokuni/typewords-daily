@@ -6,8 +6,9 @@
 set -uo pipefail
 A="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$A" || exit 1
-# 环境：config/env.sh 里有 DEEPSEEK_API_KEY 和 PATH（node v22 必须优先于 /usr/bin/node v20，
-# 否则 pi 会因 fs.globSync 缺失直接崩）
+# 环境：config/env.sh 提供 PATH（node v22 必须优先于 /usr/bin/node v20，
+# 否则 pi 会因 fs.globSync 缺失直接崩）与可选的 API key 回退。
+# 大模型凭据实际由 pi 自己读 ~/.pi/agent/auth.json（provider 定义见 ~/.pi/agent/models.json）。
 if [ -f "$A/config/env.sh" ]; then
   . "$A/config/env.sh"
 else

@@ -54,16 +54,26 @@ uv venv .venv && uv pip install --python .venv/bin/python oss2 paho-mqtt PyYAML
 
 # 3) 配置
 cp config/print.yaml.example config/print.yaml && chmod 600 config/print.yaml   # 填 OSS/MQTT 凭据
-cp config/env.sh.example  config/env.sh  && chmod 600 config/env.sh             # 填 DEEPSEEK_API_KEY
+cp config/env.sh.example  config/env.sh  && chmod 600 config/env.sh             # 填 API key（可选，见下方说明）
 
-# 4) 冒烟（不打印、不标记）
+# 4) pi 的 provider 凭据（本仓库不含密钥，放 pi 自己的凭据文件）
+#    ~/.pi/agent/models.json   声明自定义 OpenAI 兼容 provider（baseUrl + 模型）
+#    ~/.pi/agent/auth.json     存该 provider 的 api_key（0600）
+#    ~/.pi/agent/settings.json 设 defaultProvider / defaultModel
+#    当前默认：provider=qwen-maas → https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1
+#              model=deepseek-v4.1-flash
+
+# 5) 冒烟（不打印、不标记）
 ./bin/run.sh --dry-run --force
 
-# 5) 全链路
+# 6) 全链路
 ./bin/run.sh --force
 ```
 
 前置组件：`typst`（≥0.15）、`pi`（编码 Agent，**Node ≥22**）、`flock`、本机 MQTT broker 与订阅 `home/printer/tasks` 的打印端。
+
+> pi 的密钥优先级：`--api-key` > `auth.json` > 环境变量 > `models.json`。流水线走 `auth.json`，
+> 因此 cron 的极简环境（`env -i`）也能取到凭据；`config/env.sh` 里的 key 仅作环境变量回退。
 
 ## 定时任务（Hermes cron）
 
@@ -90,7 +100,7 @@ mark_known: true       # 打印后把收录词标记为已掌握（不动 wrong 
 exclude_known: true    # 跳过已 known 的词，避免重复打印同一批
 print_retries: 2       # 收不到回执时重发次数
 print_ack_timeout: 45  # 等回执秒数（无回执不算失败，只记 ack:null）
-pi: {provider: deepseek, model: deepseek-v4-pro, thinking: low, attempts: 2, timeout_seconds: 900}
+pi: {provider: qwen-maas, model: deepseek-v4.1-flash, thinking: low, attempts: 2, timeout_seconds: 900}
 ```
 
 ## 已知坑（都已在代码里规避）

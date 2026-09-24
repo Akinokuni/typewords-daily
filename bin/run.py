@@ -160,8 +160,8 @@ for attempt in range(1, attempts + 1):
                    os.path.join(RUN_DIR, f"article.attempt{attempt-1}.json"))
     brief = render_brief(len(words), words) + (f"\n\n反馈：{feedback}\n" if feedback else "")
     cmd = [PI, "-p", "-a",
-           "--provider", pi_cfg.get("provider", "deepseek"),
-           "--model", pi_cfg.get("model", "deepseek-v4-pro"),
+           "--provider", pi_cfg.get("provider", "qwen-maas"),
+           "--model", pi_cfg.get("model", "deepseek-v4.1-flash"),
            "--thinking", str(pi_cfg.get("thinking", "low")),
            "--tools", "read,write,edit,bash,grep,find,ls",
            "--session-dir", os.path.join(RUN_DIR, "sessions"),

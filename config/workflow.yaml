@@ -8,8 +8,8 @@ exclude_known: true      # 到期词里已 known=true 的跳过（避免重复�
 print_retries: 2         # 收不到打印机回执时重发次数
 
 pi:
-  provider: deepseek
-  model: deepseek-v4-pro # deepseek-v4-pro | deepseek-v4-flash
+  provider: qwen-maas             # 自定义 OpenAI 兼容端点（见 ~/.pi/agent/models.json）
+  model: deepseek-v4.1-flash      # 该端点可用：deepseek-v4.1-flash | deepseek-v4-pro | qwen3.7-max
   thinking: low
   attempts: 2            # pi 创作尝试次数（含带反馈的重试）；仍失败则用例句兜底
   timeout_seconds: 900

@@ -1,0 +1,28 @@
+# 复制为 config/print.yaml 并填入真实凭据（chmod 600），本文件不含任何密钥。
+#
+# oss   —— 阿里云 OSS：上传讲义 PDF 并生成临时下载链接
+# mqtt  —— 本机 broker：向订阅 home/printer/tasks 的本地打印端下发任务
+# topics.task   = 下发通道（无 retained）
+# topics.status = 回执通道（**非 retained**：必须先订阅再下发，否则丢回执）
+
+oss:
+  access_key_id: "LTAI_REPLACE_ME"
+  access_key_secret: "REPLACE_ME"
+  endpoint: "https://oss-cn-guangzhou.aliyuncs.com"
+  bucket_name: "REPLACE_ME"
+  prefix: "prints/"
+  presign_expires: 300
+
+mqtt:
+  broker_host: "127.0.0.1"
+  broker_port: 1883
+  # username:
+  # password:
+  client_id: "ai-agent-publisher"
+  keepalive: 60
+  qos: 1
+  publish_timeout: 10
+
+topics:
+  task: "home/printer/tasks"
+  status: "home/printer/status"

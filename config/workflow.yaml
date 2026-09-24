@@ -1,0 +1,22 @@
+# TypeWords 日报 Agent 运行参数
+# 改动即时生效（每次 run.py 启动时读取）
+
+max_words: 20            # 单次讲义最多收录多少个到期词（超出按最逾期优先）
+print: true              # 生成后推送打印
+mark_known: true         # 打印后把当天收录的词标记为已掌握（不改动 wrong 标记）
+exclude_known: true      # 到期词里已 known=true 的跳过（避免重复打印同一批词）
+print_retries: 2         # 收不到打印机回执时重发次数
+
+pi:
+  provider: deepseek
+  model: deepseek-v4-pro # deepseek-v4-pro | deepseek-v4-flash
+  thinking: low
+  attempts: 2            # pi 创作尝试次数（含带反馈的重试）；仍失败则用例句兜底
+  timeout_seconds: 900
+
+print_ack_timeout: 45    # 下发后等待打印回执的秒数（无回执不算失败，只记 ack:null）
+reader_skill: /root/.hermes/skills/margin-ruby-reader
+print_skill_scripts: /root/.hermes/skills/productivity/print/scripts
+print_config: config/print.yaml
+template: assets/template.typ
+fonts_dir: assets/fonts

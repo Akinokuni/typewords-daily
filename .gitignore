@@ -1,0 +1,22 @@
+# ==== 凭据：绝不入库 ====
+config/print.yaml
+config/env.sh
+*.pem
+*.key
+
+# ==== 运行态（每次运行产出，不入库）====
+state/
+logs/
+out/
+*.log
+
+# ==== 字体：第三方大文件，用 bin/fetch_fonts.sh 就位（本机是软链）====
+assets/fonts
+
+# ==== Python ====
+.venv/
+__pycache__/
+*.py[cod]
+
+# ==== 杂项 ====
+.DS_Store

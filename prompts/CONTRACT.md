@@ -46,7 +46,7 @@
 ## 红线
 
 - 不得读取、打印、复制 `config/print.yaml`、`config/env.sh` 或任何密钥；不得把密钥写进任何文件或输出
-- 只在 `state/runs/<DATE>/` 内写文件
+- 只在**任务简报给出的 `工作目录`** 下的 `state/runs/<DATE>/` 内写文件（不要跑到别的仓库目录去干活）；缺少输入文件时报告失败，**不要**自行重建 `due.json`（它由 `bin/run.py` 生成）
 - 需要改代码时，只允许改 `bin/write_article.py` 的**容错分支**（例如释义兜底、屈折匹配补充），改完必须在 `state/runs/<DATE>/pi_notes.md` 里用 ≤5 行说明改了什么、为什么
 - 网络只访问 TypeWords API：`https://typewords.akinokuni.cn/api`
 - 绝对不要删除/移动 `state/`、`out/`、`logs/` 里的历史文件

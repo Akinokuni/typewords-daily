@@ -105,7 +105,8 @@ def render_brief(words, new_words, review_words):
     with open(os.path.join(AGENT, "prompts", "daily.md"), encoding="utf-8") as f:
         tpl = f.read()
     return (tpl.replace("{{DATE}}", TODAY)
-               .replace("{{RUN_DIR}}", REL_RUN)
+                   .replace("{{RUN_DIR}}", RUN_DIR)
+                   .replace("{{AGENT}}", AGENT)
                .replace("{{N}}", str(len(words)))
                .replace("{{N_NEW}}", str(len(new_words)))
                .replace("{{N_REVIEW}}", str(len(review_words)))

@@ -1,6 +1,6 @@
 # 今日任务 {{DATE}}
 
-工作目录：`/root/typewords-agent`
+工作目录：`{{AGENT}}`
 输入：`{{RUN_DIR}}/due.json` —— 今天讲义共 **{{N}}** 个词：新词 {{N_NEW}} 个 + 到期复习 {{N_REVIEW}} 个
 
 新词（第一次学，务必讲清楚、给足语境）：{{NEW_WORDS}}

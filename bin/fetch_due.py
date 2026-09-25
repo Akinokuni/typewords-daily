@@ -19,6 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True)
     ap.add_argument("--max", type=int, default=20)
+    ap.add_argument("--out", default="due.json", help="输出文件名（默认 due.json）")
     ap.add_argument("--include-known", action="store_true")
     a = ap.parse_args()
 
@@ -46,6 +47,7 @@ def main():
     for d in words:
         entries.append({
             "word": d.get("word"),
+            "src": "review",
             "part": T.part(d),
             "phonetic": T.phonetic(d),
             "meaning": T.senses(d),
@@ -62,7 +64,7 @@ def main():
         "words": entries,
     }
     os.makedirs(a.run_dir, exist_ok=True)
-    with open(os.path.join(a.run_dir, "due.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(a.run_dir, a.out), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
 
     print(f"due_total={out['due_total']} fetched={out['fetched']} "

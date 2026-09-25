@@ -101,13 +101,17 @@ def escalate(stage, detail):
     return 1
 
 
-def render_brief(nwords, words):
+def render_brief(words, new_words, review_words):
     with open(os.path.join(AGENT, "prompts", "daily.md"), encoding="utf-8") as f:
         tpl = f.read()
     return (tpl.replace("{{DATE}}", TODAY)
                .replace("{{RUN_DIR}}", REL_RUN)
-               .replace("{{N}}", str(nwords))
-               .replace("{{WORDS}}", ", ".join(words)))
+               .replace("{{N}}", str(len(words)))
+               .replace("{{N_NEW}}", str(len(new_words)))
+               .replace("{{N_REVIEW}}", str(len(review_words)))
+               .replace("{{WORDS}}", ", ".join(words))
+               .replace("{{NEW_WORDS}}", ", ".join(new_words) or "（今天没有新词）")
+               .replace("{{REVIEW_WORDS}}", ", ".join(review_words) or "（今天没有到期复习词）"))
 
 
 # ---------------- 幂等 ----------------
@@ -126,38 +130,91 @@ wf = T.load_workflow()
 log(f"=== run start date={TODAY} dry_run={DRY} force={FORCE} ===")
 
 # ---------------- 1. 取数 ----------------
-# word_source: new = 今天要记的新词（App 同款算法：lastLearnIndex 起取 perDayStudyNumber 个，跳过已掌握）
-#              due = 记忆曲线到期复习词（旧行为）
-SOURCE = str(wf.get("word_source", "new")).lower()
-if SOURCE == "due":
-    fetcher = "fetch_due.py"
-else:
-    SOURCE = "new"
-    fetcher = "fetch_new.py"
-fetch_cmd = [PY, os.path.join(AGENT, "bin", fetcher), "--run-dir", RUN_DIR,
-             "--max", str(wf.get("max_words", 20))]
-if SOURCE == "due" and (os.environ.get("TW_INCLUDE_KNOWN") or not wf.get("exclude_known", True)):
-    fetch_cmd.append("--include-known")
-r = run(fetch_cmd, timeout=300, stage="fetch")
-if r is None or r.returncode != 0:
-    sys.exit(escalate("fetch", (r.stdout + r.stderr) if r else "timeout"))
+# word_source: new      = 今天要记的新词（App 同款算法：lastLearnIndex 起取 perDayStudyNumber 个，
+#                         跳过已掌握 / 已学过的词）
+#              due      = 记忆曲线到期复习词（旧行为）
+#              new+due  = 两者合并成一份讲义（默认：新词 + 到期复习词一起印）
+SOURCE = str(wf.get("word_source", "new+due")).lower()
+WANT_NEW = SOURCE in ("new", "new+due", "both")
+WANT_DUE = SOURCE in ("due", "new+due", "both")
+if not (WANT_NEW or WANT_DUE):
+    sys.exit(escalate("fetch", f"未知 word_source={SOURCE!r}（可用 new | due | new+due）"))
 
-with open(os.path.join(RUN_DIR, "due.json"), encoding="utf-8") as f:
-    due = json.load(f)
-words = [w["word"] for w in due.get("words", [])]
+include_known = bool(os.environ.get("TW_INCLUDE_KNOWN")) or not wf.get("exclude_known", True)
+
+new_part, review_part = None, None
+if WANT_NEW:
+    cmd = [PY, os.path.join(AGENT, "bin", "fetch_new.py"), "--run-dir", RUN_DIR,
+           "--out", "new.json", "--max", str(wf.get("max_words", 20))]
+    if include_known:
+        cmd.append("--include-known")
+    r = run(cmd, timeout=300, stage="fetch-new")
+    if r is None or r.returncode != 0:
+        sys.exit(escalate("fetch-new", (r.stdout + r.stderr) if r else "timeout"))
+    with open(os.path.join(RUN_DIR, "new.json"), encoding="utf-8") as f:
+        new_part = json.load(f)
+
+if WANT_DUE:
+    cmd = [PY, os.path.join(AGENT, "bin", "fetch_due.py"), "--run-dir", RUN_DIR,
+           "--out", "review.json", "--max", str(wf.get("max_due_words", 20))]
+    if include_known:
+        cmd.append("--include-known")
+    r = run(cmd, timeout=300, stage="fetch-due")
+    if r is None or r.returncode != 0:
+        sys.exit(escalate("fetch-due", (r.stdout + r.stderr) if r else "timeout"))
+    with open(os.path.join(RUN_DIR, "review.json"), encoding="utf-8") as f:
+        review_part = json.load(f)
+
+# 合并成一份：到期复习词在前（时间紧），新词在后；按小写词形去重
+merged, seen = [], set()
+for entry in ((review_part or {}).get("words") or []) + ((new_part or {}).get("words") or []):
+    k = str(entry.get("word", "")).lower()
+    if not k or k in seen:
+        continue
+    seen.add(k)
+    merged.append(entry)
+
+review_words = [w["word"] for w in merged if w.get("src") == "review"]
+new_words = [w["word"] for w in merged if w.get("src") != "review"]
+# 注意：下面是旧的 fetch 输出名 due.json —— 保持文件名不变，下游（pi/组版/校验）无需改动
+due = {
+    "date": TODAY,
+    "source": SOURCE,
+    "review_total": (review_part or {}).get("due_total"),
+    "review_count": len(review_words),
+    "new_count": len(new_words),
+    "skipped_known": (review_part or {}).get("skipped_known") or [],
+    "skipped_ignored": (new_part or {}).get("skipped_ignored") or [],
+    "skipped_studied": (new_part or {}).get("skipped_studied") or [],
+    "book": (new_part or {}).get("book"),
+    "batch": (new_part or {}).get("batch"),
+    "words": merged,
+}
+with open(os.path.join(RUN_DIR, "due.json"), "w", encoding="utf-8") as f:
+    json.dump(due, f, ensure_ascii=False, indent=1)
+
+words = [w["word"] for w in merged]
 if not words:
     bk = due.get("book") or {}
-    log(f"no pending words (source={SOURCE}, "
+    log(f"no pending words (source={SOURCE}, new={len(new_words)}, review={len(review_words)}, "
+        f"review_total={due.get('review_total')}, "
         f"progress={bk.get('last_learn_index')}/{bk.get('length')}, "
-        f"is_end={bk.get('is_end')}, skipped_ignored={len(due.get('skipped_ignored', []))}) — 静默跳过")
+        f"is_end={bk.get('is_end')}, skipped_ignored={len(due['skipped_ignored'])}, "
+        f"skipped_studied={len(due['skipped_studied'])}) — 静默跳过")
     write_status({"ok": True, "skipped": f"no {SOURCE} words", "source": SOURCE,
-                  "due_total": due.get("due_total"),
+                  "due_total": due.get("review_total"),
+                  "review_count": 0, "new_count": 0,
                   "batch_start_index": (due.get("batch") or {}).get("start_index"),
                   "book_progress": f"{bk.get('last_learn_index')}/{bk.get('length')}",
-                  "skipped_known": len(due.get("skipped_known", [])),
-                  "skipped_ignored": len(due.get("skipped_ignored", []))})
+                  "skipped_known": len(due.get("skipped_known") or []),
+                  "skipped_ignored": len(due["skipped_ignored"]),
+                  "skipped_studied": len(due["skipped_studied"])})
     clear_attention()
     sys.exit(0)
+
+log(f"batch: source={SOURCE} new={len(new_words)} review={len(review_words)} total={len(words)}")
+log(f"  review: {' '.join(review_words) or '(none)'}")
+log(f"  new:    {' '.join(new_words) or '(none)'}")
 
 # ---------------- 2. pi 创作 + 3. 组版编译 ----------------
 pi_cfg = wf.get("pi", {})
@@ -171,7 +228,7 @@ for attempt in range(1, attempts + 1):
     if os.path.exists(os.path.join(RUN_DIR, "article.json")) and attempt > 1:
         os.replace(os.path.join(RUN_DIR, "article.json"),
                    os.path.join(RUN_DIR, f"article.attempt{attempt-1}.json"))
-    brief = render_brief(len(words), words) + (f"\n\n反馈：{feedback}\n" if feedback else "")
+    brief = render_brief(words, new_words, review_words) + (f"\n\n反馈：{feedback}\n" if feedback else "")
     cmd = [PI, "-p", "-a",
            "--provider", pi_cfg.get("provider", "qwen-maas"),
            "--model", pi_cfg.get("model", "deepseek-v4.1-flash"),
@@ -237,13 +294,35 @@ if not DRY and wf.get("mark_known", True):
     if not mark_info.get("ok"):
         sys.exit(escalate("mark", json.dumps(mark_info, ensure_ascii=False)[:400]))
 
-# ---------------- 6. 独立校验 ----------------
+# ---------------- 6. 记「学了一遍」（FSRS 卡片，不是 known） ----------------
+# 用户口径：打印出来 = 这个词学了一遍 → 写 FSRS 卡进复习调度（之后按算法推到期复习），
+# 而不是标记掌握（known 会被 App 从新词池永久排除，且删掉 FSRS 卡）。
+study_info = {"ok": False, "skipped": True, "dry_run": True}
+if not DRY and wf.get("study_record", True):
+    scmd = [PY, os.path.join(AGENT, "bin", "study_record.py"), "--run-dir", RUN_DIR,
+            "--rating", str(wf.get("study_rating", "good"))]
+    if wf.get("advance_index"):
+        scmd.append("--advance-index")
+    sr = run(scmd, timeout=300, stage="study")
+    if sr is None or not sr.stdout.strip():
+        sys.exit(escalate("study", (sr.stderr if sr else "") or "no output"))
+    try:
+        study_info = json.loads(sr.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        sys.exit(escalate("study", f"无法解析学习记录结果: {e!r} | {sr.stdout[-400:]}"))
+    if not study_info.get("ok"):
+        sys.exit(escalate("study", json.dumps(study_info.get("verify_errors") or study_info,
+                                              ensure_ascii=False)[:400]))
+
+# ---------------- 7. 独立校验 ----------------
 vcmd = [PY, os.path.join(AGENT, "bin", "verify.py"), "--run-dir", RUN_DIR,
         "--pdf", build_info["pdf"]]
 if not DRY and wf.get("print", True):
     vcmd.append("--expect-print")
 if not DRY and wf.get("mark_known", True):
     vcmd.append("--expect-mark")
+if not DRY and wf.get("study_record", True):
+    vcmd.append("--expect-study")
 vr = run(vcmd, timeout=300, stage="verify")
 if vr is None:
     sys.exit(escalate("verify", "timeout"))
@@ -261,15 +340,22 @@ status = {
     "ok": True, "degraded": fallback_used,
     "degraded_reason": "pi 未产出有效文章，已用 API 例句兜底" if fallback_used else "",
     "source": SOURCE,
-    "due_total": due.get("due_total"),
+    "due_total": due.get("review_total"),
+    "review_count": len(review_words), "new_count": len(new_words),
     "batch_start_index": (due.get("batch") or {}).get("start_index"),
     "book_progress": (f"{(due.get('book') or {}).get('last_learn_index')}"
                       f"/{(due.get('book') or {}).get('length')}"),
     "words": words, "word_count": len(words),
+    "review_words": review_words, "new_words": new_words,
     "pdf": build_info["pdf"], "pages": build_info.get("pages"),
     "job_id": print_info.get("job_id"), "ack": print_info.get("ack"),
     "print_clients_connected": print_info.get("clients_connected"),
     "known_verified": len(mark_info.get("verified", [])),
+    "studied": len(study_info.get("rated") or []),
+    "study_rating": (str(wf.get("study_rating", "good")) if wf.get("study_record", True) else None),
+    "study_skipped": bool(study_info.get("skipped")),
+    "next_due": study_info.get("next_due") or {},
+    "index_advanced": study_info.get("advanced"),
     "warnings": verify_info.get("warnings", []),
     "dry_run": DRY,
 }
@@ -278,6 +364,9 @@ clear_attention()
 with open(os.path.join(STATE_DIR, "history.jsonl"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"date": TODAY, "words": words, "pdf": build_info["pdf"],
                         "job_id": print_info.get("job_id"),
+                        "review_count": len(review_words), "new_count": len(new_words),
+                        "studied": len(study_info.get("rated") or []),
+                        "next_due": (study_info.get("next_due") or {}).get("min"),
                         "ack": bool(print_info.get("ack")), "dry_run": DRY,
                         "degraded": fallback_used},
                        ensure_ascii=False) + "\n")

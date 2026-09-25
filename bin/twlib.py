@@ -29,6 +29,32 @@ def api_post(path, payload, timeout=30):
         return r.status, r.read().decode()
 
 
+def api_put(path, payload, timeout=30):
+    req = urllib.request.Request(
+        API + path,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="PUT",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.status, r.read().decode()
+
+
+def get_store(key, timeout=60):
+    """读回 TypeWords 服务端存储的某个 store（'dict'/'setting'/'practice_word'）。
+
+    返回 (envelope, value)：envelope = {"val":..., "version":..., "updated_at":...}
+    """
+    raw = api_get(f"/data/{key}", timeout=timeout) or {}
+    envelope = json.loads(raw.get("value") or "{}")
+    return envelope, envelope.get("val")
+
+
+def put_store(key, envelope, timeout=60):
+    """把 envelope 写回服务端（value 字段是 JSON 字符串，与 App 的 dataSync 一致）。"""
+    return api_put(f"/data/{key}", {"value": json.dumps(envelope, ensure_ascii=False)}, timeout=timeout)
+
+
 def load_workflow(path=None):
     import yaml
     p = path or os.path.join(AGENT_DIR, "config", "workflow.yaml")

@@ -24,6 +24,7 @@ def main():
     ap.add_argument("--pdf", default=None)
     ap.add_argument("--expect-print", action="store_true")
     ap.add_argument("--expect-mark", action="store_true")
+    ap.add_argument("--expect-study", action="store_true")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run_dir)
 
@@ -112,6 +113,41 @@ def main():
             except Exception as e:
                 unverified.append(f"{w}({e!r})")
         check("known_on_server", not unverified, f"not known: {unverified}")
+
+    if a.expect_study:
+        sj = os.path.join(run_dir, "study.json")
+        data = {}
+        if os.path.isfile(sj):
+            with open(sj, encoding="utf-8") as f:
+                data = json.load(f)
+        check("study_reported_ok", bool(data.get("ok")),
+              f"rating={data.get('rating')} rated={len(data.get('rated') or [])} "
+              f"errors={data.get('verify_errors')}")
+        per_word = ((data.get("next_due") or {}).get("per_word") or {})
+        check("study_covers_all_words", len(data.get("rated") or []) == len(targets),
+              f"{len(data.get('rated') or [])}/{len(targets)}")
+        # 服务端复核：每个词都落了 FSRS 卡（有下次到期时间），且没有被误标 known
+        bad_due, still_new, marked_known = [], [], []
+        for w in targets:
+            try:
+                d = T.api_get("/words/" + w)
+            except Exception as e:
+                bad_due.append(f"{w}({e!r})")
+                continue
+            due = (d.get("fsrs") or {}).get("due")
+            if not due:
+                still_new.append(w)
+            else:
+                want = per_word.get(w)
+                if want and str(due)[:19] != str(want)[:19]:
+                    bad_due.append(f"{w} {due}!={want}")
+            if (d.get("flags") or {}).get("known"):
+                marked_known.append(w)
+        check("fsrs_card_on_server", not still_new and not bad_due,
+              f"no_card={still_new} mismatch={bad_due}")
+        check("known_left_untouched", not marked_known, f"被标 known: {marked_known}")
+        if data.get("advanced"):
+            warnings.append(f"lastLearnIndex 推进：{data['advanced']}")
 
     _emit(checks, failures, warnings)
     return 1 if failures else 0

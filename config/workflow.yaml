@@ -1,13 +1,23 @@
 # TypeWords 日报 Agent 运行参数
 # 改动即时生效（每次 run.py 启动时读取）
 
-word_source: new         # new = 今天要记的**新词**（App 同款算法：从 lastLearnIndex 起取 perDayStudyNumber 个，跳过已掌握）
-                         # due = 记忆曲线到期复习词（旧行为，配 exclude_known 使用）
-max_words: 20            # 单次讲义最多收录多少个词（超出按顺序截断）
+word_source: new+due     # new     = 今天要记的**新词**（App 同款算法：从 lastLearnIndex 起取
+                         #           perDayStudyNumber 个，跳过已掌握 / 已学过的词）
+                         # due     = 记忆曲线到期复习词
+                         # new+due = 两者合并成**一份**讲义（默认：新词 + 到期复习词一起印）
+max_words: 20            # 新词上限（超过按顺序截断）
+max_due_words: 20        # 到期复习词上限
 print: true              # 生成后推送打印
-mark_known: false        # 打印后是否把当天收录的词标记为已掌握。新词流程必须 false：
-                         # 标 known 会被 App 从「新词」里永久排除（且删掉 FSRS 卡），等于剥夺当天要学的词
-exclude_known: true      # 仅 word_source=due 时生效：到期词里已 known 的跳过
+mark_known: false        # 打印后是否标记「掌握」。必须 false：标 known 会被 App 从新词池永久
+                         # 排除，并删掉 FSRS 卡 —— 用户口径是「学了一遍」，不是「掌握」
+study_record: true       # 打印成功后记录「学了一遍」= 写 FSRS 卡片（ts-fsrs 打分），
+                         # 之后由 FSRS 到期时间把词推进「到期复习」，与新词一起印
+study_rating: good       # 记录时的打分：good（认真过了一遍，无错）/ easy（很轻松，隔得久）/
+                         # hard / again（第一次复习很快再见面）
+advance_index: false     # 是否像 App 完成学习任务那样推进 lastLearnIndex。默认 false：
+                         # 卡片本身就是「已学」标记，fetch_new 会跳过有卡片的词，不会重复推新词；
+                         # 而推进进度可能与 App 自己完成学习任务时重复推进（跳过 20 个词）
+exclude_known: true      # 已掌握的词不再进讲义（新词与到期词都跳过）
 print_retries: 2         # 收不到打印机回执时重发次数
 
 pi:

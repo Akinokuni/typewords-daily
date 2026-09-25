@@ -20,3 +20,7 @@ __pycache__/
 
 # ==== 杂项 ====
 .DS_Store
+# ==== Node 依赖（ts-fsrs 等，用 npm i --prefix tools/fsrs 就位）====
+node_modules/
+tools/fsrs/probe.mjs
+tools/fsrs/sim.mjs

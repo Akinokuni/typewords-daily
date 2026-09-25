@@ -1,10 +1,13 @@
 # TypeWords 日报 Agent 运行参数
 # 改动即时生效（每次 run.py 启动时读取）
 
-max_words: 20            # 单次讲义最多收录多少个到期词（超出按最逾期优先）
+word_source: new         # new = 今天要记的**新词**（App 同款算法：从 lastLearnIndex 起取 perDayStudyNumber 个，跳过已掌握）
+                         # due = 记忆曲线到期复习词（旧行为，配 exclude_known 使用）
+max_words: 20            # 单次讲义最多收录多少个词（超出按顺序截断）
 print: true              # 生成后推送打印
-mark_known: true         # 打印后把当天收录的词标记为已掌握（不改动 wrong 标记）
-exclude_known: true      # 到期词里已 known=true 的跳过（避免重复打印同一批词）
+mark_known: false        # 打印后是否把当天收录的词标记为已掌握。新词流程必须 false：
+                         # 标 known 会被 App 从「新词」里永久排除（且删掉 FSRS 卡），等于剥夺当天要学的词
+exclude_known: true      # 仅 word_source=due 时生效：到期词里已 known 的跳过
 print_retries: 2         # 收不到打印机回执时重发次数
 
 pi:

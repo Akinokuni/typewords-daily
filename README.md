@@ -1,6 +1,6 @@
 # typewords-daily
 
-每天 07:00 自动生成一份 **TypeWords 到期词的英文复习讲义**（连贯短文 + 中文 Ruby 注释 + 右侧手写留白），推送打印，并把当天收录的词标记为已掌握。
+每天 07:00 自动生成一份 **TypeWords 今日新词的英文记忆讲义**（连贯短文 + 中文 Ruby 注释 + 右侧手写留白）并推送打印。词集用 App 同款算法取「今天要记的新词」：从词书 `lastLearnIndex` 起取 `perDayStudyNumber` 个、跳过已掌握。
 
 **成功即静默**（定时任务不发任何消息）；**只在失败时**输出 ≤10 行摘要上报，交由 07:25 的修复任务接手。
 
@@ -11,28 +11,28 @@ cron 07:00 ──> bin/run.sh ──> bin/run.py（编排 + flock 防并发 + �
                                 │
       ┌─────────────────────────┼─────────────────────────┐
       ▼                         ▼                         ▼
- fetch_due.py             pi (LLM)                  write_article.py
- TypeWords API 取到期词 ──> 只写一篇文章 ────────> typst 编译 A4 PDF
+ fetch_new.py              pi (LLM)                  write_article.py
+ TypeWords API 取今日新词 ──> 只写一篇文章 ────────> typst 编译 A4 PDF
  state/runs/<date>/due.json  article.json          assets/template.typ
                                 │
                                 ▼
                      print_pdf.py（OSS 上传 + MQTT 下发 + 等回执）
                                 │
                                 ▼
-                     mark_known.py（标 known 并逐词复核）
+                mark_known.py（可选，默认关闭：新词流程标 known 会剥夺当天要学的词）
                                 │
                                 ▼
                      verify.py（独立硬校验，不信任任何自述）
 ```
 
-- **LLM 的职责边界**：`pi` 只负责「把到期词写成一篇连贯、简单、符合单词水平的英文短文」，输出固定 schema 的 `article.json`。取数、排版、编译、上传、打印、标记、校验全部是确定性脚本 —— 行为每天可复现，失败面最小。
+- **LLM 的职责边界**：`pi` 只负责「把今天的目标词写成一篇连贯、简单、符合单词水平的英文短文」，输出固定 schema 的 `article.json`。取数、排版、编译、上传、打印、标记、校验全部是确定性脚本 —— 行为每天可复现，失败面最小。
 - **不信任自述**：`verify.py` 独立复核 PDF 是否存在/页数/字体嵌入/词覆盖率、OSS 对象的 ETag 与本地 MD5 是否一致、`known` 是否真的落到服务端、打印回执是否真的来自打印机（而非自己下发的回声）。
 - **降级可用**：pi 连续失败则用例句兜底出讲义并标 `DEGRADED`（有讲义、但非连贯短文）。
 
 ## 目录
 
 ```
-bin/            run.sh(唯一入口) run.py(编排) fetch_due.py write_article.py
+bin/            run.sh(唯一入口) run.py(编排) fetch_new.py(今日新词) fetch_due.py(到期词，备用)
                 print_pdf.py mark_known.py verify.py check_attention.py
                 selfcheck.sh(pi 自检) fetch_fonts.sh setup_github.sh drill_exitcode.sh
 prompts/         daily.md(任务模板) CONTRACT.md(pi 作业契约，经 --append-system-prompt 注入)
@@ -94,10 +94,11 @@ WARN no-print-ack-streak=<n>      # 连续 n 天(3/7)无打印回执
 ## 参数（config/workflow.yaml）
 
 ```yaml
-max_words: 20          # 单次最多收录词数（超出按最逾期优先）
+word_source: new       # new = 今天要记的新词（App 同款算法）；due = 到期复习词（旧行为）
+max_words: 20          # 单次最多收录词数
 print: true            # 生成后推送打印
-mark_known: true       # 打印后把收录词标记为已掌握（不动 wrong 标记）
-exclude_known: true    # 跳过已 known 的词，避免重复打印同一批
+mark_known: false      # 打印后是否标已掌握 —— 新词流程必须 false（标 known 会被 App 从新词里永久排除）
+exclude_known: true    # 仅 word_source=due 时生效：跳过已 known 的词
 print_retries: 2       # 收不到回执时重发次数
 print_ack_timeout: 45  # 等回执秒数（无回执不算失败，只记 ack:null）
 pi: {provider: qwen-maas, model: deepseek-v4.1-flash, thinking: low, attempts: 2, timeout_seconds: 900}
@@ -109,7 +110,9 @@ pi: {provider: qwen-maas, model: deepseek-v4.1-flash, thinking: low, attempts: 2
 - **打印回执非 retained**：`home/printer/status` 不重放，必须**先订阅再下发**，且要读**到终态**（`downloading → printing → success`，通常 5~8s）。
 - **自身下发回声**：订阅 `home/printer/#` 时也会收到自己发到 `tasks` 的消息，判回执必须排除 task 通道并比对 `job_id`。
 - **`pkill -f mosquitto_sub` 会杀掉自己所在的 shell**（模式匹配到自身命令行）→ 用 `pgrep -x` + 按 pid kill。
-- **`known` 与 FSRS 是两套数据**：标了 known，`fsrsDue` 仍会把这些词算作到期 → 用 `exclude_known` 避免重复打印。
+- **`known` 的副作用（新词流程的红线）**：App 拼「今日新词」时会跳过 `known` 词（`store.getIgnoreWordsSet()`），标 known 还会删掉该词的 FSRS 卡 —— 所以新词流程**绝不能**标 known，否则等于把这批词从新词池里永久剔除。`mark_known` 默认 `false`。
+- **`known` 与 FSRS 是两套数据**（仅 `word_source: due` 的旧流程相关）：标了 known，`fsrsDue` 仍会把这些词算作到期 → 用 `exclude_known` 避免重复打印。
+- **「今日新词」的算法来源**：`useWordCollectPicker.mjs` 的 `getCurrentStudyWord()` —— 从 `book.lastLearnIndex` 起、跳过 ignore 集（`known` ∪ `simpleWords`，`setting.ignoreSimpleWord=false` 时只用 `known`）、取满 `perDayStudyNumber` 个；`lastLearnIndex >= length-1` 时视为学完（无新词）。`bin/fetch_new.py` 与它逐条对齐；词书全量词条可从 `GET /api/export` 的 `dict.val.word.bookList[studyIndex]` 取到（含音标/释义/例句，无需逐词请求）。
 - **pi 的作业契约**放在 `prompts/CONTRACT.md`（由 `--append-system-prompt` 注入），不使用 `AGENTS.md`。
 
 ## 安全

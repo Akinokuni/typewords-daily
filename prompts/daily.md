@@ -1,7 +1,7 @@
 # 今日任务 {{DATE}}
 
 工作目录：`/root/typewords-agent`
-输入：`{{RUN_DIR}}/due.json` —— 今天有 **{{N}}** 个到期词：{{WORDS}}
+输入：`{{RUN_DIR}}/due.json` —— 今天要记 **{{N}}** 个新词：{{WORDS}}
 
 请按本会话系统提示中的「作业契约」（`prompts/CONTRACT.md`）完成：
 

@@ -126,9 +126,17 @@ wf = T.load_workflow()
 log(f"=== run start date={TODAY} dry_run={DRY} force={FORCE} ===")
 
 # ---------------- 1. 取数 ----------------
-fetch_cmd = [PY, os.path.join(AGENT, "bin", "fetch_due.py"), "--run-dir", RUN_DIR,
+# word_source: new = 今天要记的新词（App 同款算法：lastLearnIndex 起取 perDayStudyNumber 个，跳过已掌握）
+#              due = 记忆曲线到期复习词（旧行为）
+SOURCE = str(wf.get("word_source", "new")).lower()
+if SOURCE == "due":
+    fetcher = "fetch_due.py"
+else:
+    SOURCE = "new"
+    fetcher = "fetch_new.py"
+fetch_cmd = [PY, os.path.join(AGENT, "bin", fetcher), "--run-dir", RUN_DIR,
              "--max", str(wf.get("max_words", 20))]
-if os.environ.get("TW_INCLUDE_KNOWN") or not wf.get("exclude_known", True):
+if SOURCE == "due" and (os.environ.get("TW_INCLUDE_KNOWN") or not wf.get("exclude_known", True)):
     fetch_cmd.append("--include-known")
 r = run(fetch_cmd, timeout=300, stage="fetch")
 if r is None or r.returncode != 0:
@@ -138,11 +146,16 @@ with open(os.path.join(RUN_DIR, "due.json"), encoding="utf-8") as f:
     due = json.load(f)
 words = [w["word"] for w in due.get("words", [])]
 if not words:
-    log(f"no pending words (due_total={due.get('due_total')}, "
-        f"skipped_known={len(due.get('skipped_known', []))}) — 静默跳过")
-    write_status({"ok": True, "skipped": "no due words",
+    bk = due.get("book") or {}
+    log(f"no pending words (source={SOURCE}, "
+        f"progress={bk.get('last_learn_index')}/{bk.get('length')}, "
+        f"is_end={bk.get('is_end')}, skipped_ignored={len(due.get('skipped_ignored', []))}) — 静默跳过")
+    write_status({"ok": True, "skipped": f"no {SOURCE} words", "source": SOURCE,
                   "due_total": due.get("due_total"),
-                  "skipped_known": len(due.get("skipped_known", []))})
+                  "batch_start_index": (due.get("batch") or {}).get("start_index"),
+                  "book_progress": f"{bk.get('last_learn_index')}/{bk.get('length')}",
+                  "skipped_known": len(due.get("skipped_known", [])),
+                  "skipped_ignored": len(due.get("skipped_ignored", []))})
     clear_attention()
     sys.exit(0)
 
@@ -247,7 +260,11 @@ if not verify_info.get("ok"):
 status = {
     "ok": True, "degraded": fallback_used,
     "degraded_reason": "pi 未产出有效文章，已用 API 例句兜底" if fallback_used else "",
+    "source": SOURCE,
     "due_total": due.get("due_total"),
+    "batch_start_index": (due.get("batch") or {}).get("start_index"),
+    "book_progress": (f"{(due.get('book') or {}).get('last_learn_index')}"
+                      f"/{(due.get('book') or {}).get('length')}"),
     "words": words, "word_count": len(words),
     "pdf": build_info["pdf"], "pages": build_info.get("pages"),
     "job_id": print_info.get("job_id"), "ack": print_info.get("ack"),

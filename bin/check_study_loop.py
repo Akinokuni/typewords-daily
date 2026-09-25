@@ -10,7 +10,7 @@ import twlib as T  # noqa: E402
 RUN = "/root/typewords-agent/state/runs/2026-09-25"
 study = json.load(open(f"{RUN}/study.json"))
 words = [w.lower() for w in study["rated"]]
-per_word = study["next_due"]["per_word"]
+per_word = study["next_due"] if "per_word" not in study["next_due"] else study["next_due"]["per_word"]
 latest = max(per_word.values())
 t_due = datetime.fromisoformat(latest.replace("Z", "+00:00"))
 

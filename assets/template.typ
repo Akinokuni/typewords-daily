@@ -86,10 +86,12 @@
 
 /// 中文译文段落。
 ///
-/// 与英文正文共用同一条版心：思源黑体 9pt、灰阶 20%、行距 1.5em、两端对齐，
+/// 与英文正文共用同一条版心：思源黑体 9.5pt、灰阶 18%、行距 1.55em、两端对齐，
 /// 不加 Ruby，也不改变英文正文的字号与 1.6em 行距。译文紧接英文原文，排在
 /// **同一条页面流**里 —— 不做手动分页，页数由内容自然决定，便于就地对照。
-#let zh-translation(body) = block(width: 100%, above: 0.9em, below: 0em)[
+/// 段间距（above）与行距同值 1.55em：段与段之间的距离＝段内行与行之间的距离，
+/// 整块中文的纵向节奏完全均匀（实测均为 21.7pt）。
+#let zh-translation(body) = block(width: 100%, above: 1.55em, below: 0em)[
   #set par(leading: 1.55em, justify: true)
   #set text(font: ruby-font, size: 9.5pt, fill: luma(18%), lang: "zh")
   #body

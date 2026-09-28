@@ -131,7 +131,7 @@ pi: {provider: qwen-maas, model: deepseek-v4.1-flash, thinking: low, attempts: 2
 
 ## 版面约定
 
-- **英文原文 + 中文译文在同一页面流里**：`pi` 在 `article.json` 里给出与 `paragraphs` 一一对应的 `translations`，`write_article.py` 紧接英文正文用 `#zh-translation`（思源黑体 9.5pt、灰阶 18%、行距 1.55em）排出，标题为二级标题「中文译文」。**全文不插入任何手动分页** —— 英文原文 → 中文译文 → 词表共用同一条页面流，页数完全由内容自然决定。
+- **英文原文 + 中文译文在同一页面流里**：`pi` 在 `article.json` 里给出与 `paragraphs` 一一对应的 `translations`，`write_article.py` 紧接英文正文用 `#zh-translation`（思源黑体 9.5pt、灰阶 18%、行距 1.55em；**段间距与行距同值**）排出，标题为二级标题「中文译文」。**全文不插入任何手动分页** —— 英文原文 → 中文译文 → 词表共用同一条页面流，页数完全由内容自然决定。
 - 译文由 `verify.py` 的 `translation_in_pdf` 独立抽查（空白无关比对每段开头 12 字），确保声明了译文就真的排进了 PDF。
 - 「不许手动分页」由 `verify.py` 的 `no_manual_pagebreak` 守着：`reader.typ` 里出现 `#pagebreak()` 即判失败。
 - 右侧 6 cm 手写留白只留给手写，不放任何正文或装饰。

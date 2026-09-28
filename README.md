@@ -1,6 +1,6 @@
 # typewords-daily
 
-每天 07:00 自动生成一份 **TypeWords 英文记忆讲义**（连贯短文 + 中文 Ruby 注释 + 右侧手写留白）并推送打印。讲义把「**今天要记的新词**」（App 同款算法：从词书 `lastLearnIndex` 起取 `perDayStudyNumber` 个、跳过已掌握与已学过的）和「**FSRS 到期复习词**」合并成**同一份**。
+每天 07:00 自动生成一份 **TypeWords 英文记忆讲义**（连贯短文 + 中文 Ruby 注释 + **紧随其后的整篇中文译文** + 右侧手写留白）并推送打印。讲义把「**今天要记的新词**」（App 同款算法：从词书 `lastLearnIndex` 起取 `perDayStudyNumber` 个、跳过已掌握与已学过的）和「**FSRS 到期复习词**」合并成**同一份**。
 
 打印成功 = 这组词**「学了一遍」**（不是「掌握」）：`study_record.py` 用 App 同一个 `ts-fsrs` 库给每个词打分写进 `fsrsData`，之后由 FSRS 到期时间把词自动推进复习队列 —— 也就是「照样复习」。
 
@@ -128,6 +128,13 @@ pi: {provider: qwen-maas, model: deepseek-v4.1-flash, thinking: low, attempts: 2
 - **pi 的作业契约**放在 `prompts/CONTRACT.md`（由 `--append-system-prompt` 注入），不使用 `AGENTS.md`。
 - **打分语义**：App 按答题速度/错误数自动打分（`getGradeByWrongTimes`，阈值 `fsrsEasyLimit/GoodLimit/HardLimit`）；纸面学习没有这个信号，所以默认统一 `good`（= 认真过了一遍），可用 `study_rating` 改。
 - **同日幂等**：`state/runs/<date>/study.json` 存在即不再重复写卡（`--force` 可重写），避免手动重跑把同一个词重复「学」两遍。
+
+## 版面约定
+
+- **英文原文 + 中文译文在同一页面流里**：`pi` 在 `article.json` 里给出与 `paragraphs` 一一对应的 `translations`，`write_article.py` 紧接英文正文用 `#zh-translation`（思源黑体 9.5pt、灰阶 18%、行距 1.55em）排出，标题为二级标题「中文译文」。**全文不插入任何手动分页** —— 英文原文 → 中文译文 → 词表共用同一条页面流，页数完全由内容自然决定。
+- 译文由 `verify.py` 的 `translation_in_pdf` 独立抽查（空白无关比对每段开头 12 字），确保声明了译文就真的排进了 PDF。
+- 「不许手动分页」由 `verify.py` 的 `no_manual_pagebreak` 守着：`reader.typ` 里出现 `#pagebreak()` 即判失败。
+- 右侧 6 cm 手写留白只留给手写，不放任何正文或装饰。
 
 ## 安全
 

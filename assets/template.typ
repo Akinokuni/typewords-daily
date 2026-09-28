@@ -84,6 +84,17 @@
   body
 }
 
+/// 中文译文段落。
+///
+/// 与英文正文共用同一条版心：思源黑体 9pt、灰阶 20%、行距 1.5em、两端对齐，
+/// 不加 Ruby，也不改变英文正文的字号与 1.6em 行距。译文紧接英文原文，排在
+/// **同一条页面流**里 —— 不做手动分页，页数由内容自然决定，便于就地对照。
+#let zh-translation(body) = block(width: 100%, above: 0.9em, below: 0em)[
+  #set par(leading: 1.55em, justify: true)
+  #set text(font: ruby-font, size: 9.5pt, fill: luma(18%), lang: "zh")
+  #body
+]
+
 /// marginRuby-reader 模板。
 ///
 /// 版面固定为 A4，左 2cm、右 6cm、上/下 2.5cm；右侧宽阔空白区用于

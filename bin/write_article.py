@@ -67,6 +67,13 @@ def validate(article, targets):
     body = " ".join(paras)
     if re.search(r"[#\[\]*_$@<>~`]", body):
         problems.append("正文含 typst/Markdown 特殊字符")
+    trs = article.get("translations")
+    if trs is None:
+        problems.append("缺字段 translations（与 paragraphs 一一对应的中文译文）")
+    elif not isinstance(trs, list) or not all(isinstance(t, str) and t.strip() for t in trs):
+        problems.append("translations 必须是非空字符串数组")
+    elif len(trs) != len(paras):
+        problems.append(f"translations 段数 {len(trs)} != paragraphs 段数 {len(paras)}")
     missing = [w for w in targets if not T.inflect_regex(w).search(body)]
     unused = []
     return (not problems and not missing), missing, unused, problems
@@ -87,14 +94,25 @@ def build_typ(due, article, run_dir):
 
     title = T.esc_content(article["title"])
     today = due.get("date") or ""
+    translations = [str(t).strip() for t in (article.get("translations") or [])]
+    translations = [t for t in translations if t]
+    # 全文（英文原文 → 中文译文 → 词表）共用**同一条页面流**：任何两段之间
+    # 都不做手动分页（无 #pagebreak()），页数完全由内容自然决定。
+    zh_block = ""
+    if translations:
+        zh_block = ("\n\n#heading(level: 2)[中文译文]\n\n"
+                    + "\n\n".join(f"#zh-translation[{T.esc_content(t)}]"
+                                   for t in translations))
     head = (
-        '#import "template.typ": margin-ruby-reader, ruby, vocabulary, word-detail, word-focus\n\n'
+        '#import "template.typ": margin-ruby-reader, ruby, vocabulary, word-detail, word-focus, zh-translation\n\n'
         f'#show: margin-ruby-reader.with(\n  title: "{title}",\n  date: "{today}",\n)\n\n'
         + "\n\n".join(marked)
-        + "\n\n#pagebreak()\n\n"
+        + zh_block
+        + "\n\n"
     )
 
-    body = ['#word-focus(title: "Word list", note: none)[']
+    # 词表紧接译文、自然续排（不手动分页）；只加一点垂直间距把它和译文分开。
+    body = ['#v(0.8em)', '#word-focus(title: "Word list", note: none)[']
     for w in due["words"]:
         body.append("\n".join([
             "  #word-detail(",
@@ -177,6 +195,7 @@ def main():
         "ok": True, "pdf": pdf, "typ": typ_path, "pages": pages,
         "marked": sorted(used), "missing": [w for w in targets if w not in used],
         "glosses": len([g for g in (article.get("glosses") or {}).values() if g]),
+        "translations": len([t for t in (article.get("translations") or []) if str(t).strip()]),
         "fallback": bool(article.get("_fallback")),
     }
     if not a.quiet:

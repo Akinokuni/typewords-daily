@@ -69,6 +69,33 @@ def main():
     if 0.6 <= frac < 1:
         warnings.append("PDF 文本层未命中词：" + " ".join(w for w in targets if w not in hit))
 
+    # 中文译文：article.json 里声明了译文，就必须真的排进 PDF（空白无关比对）
+    art = {}
+    try:
+        with open(os.path.join(run_dir, "article.json"), encoding="utf-8") as f:
+            art = json.load(f)
+    except Exception as e:
+        art = {}
+        if not os.path.isfile(os.path.join(run_dir, "article.json")):
+            warnings.append("article.json 缺失，跳过译文校验")
+    trs = [str(t) for t in (art.get("translations") or []) if str(t).strip()]
+    if trs:
+        flat = re.sub(r"\s+", "", txt)
+        miss = [i + 1 for i, t in enumerate(trs)
+                if re.sub(r"\s+", "", t)[:12] not in flat]
+        check("translation_in_pdf", not miss,
+              f"{len(trs) - len(miss)}/{len(trs)} 段译文在 PDF 文本层命中" + (f"，缺：第 {miss} 段" if miss else ""))
+
+    # 版面约定：全文（英文原文 → 中文译文 → 词表）自然换页，不许手动分页
+    typ_path = os.path.join(run_dir, "reader.typ")
+    if os.path.isfile(typ_path):
+        with open(typ_path, encoding="utf-8") as f:
+            typ_src = f.read()
+        hard = [ln for ln in typ_src.splitlines()
+                if re.search(r"#(?:pagebreak|page)\(\s*\)", ln) or "pagebreak(" in ln]
+        check("no_manual_pagebreak", not hard,
+              "无手动分页" if not hard else "发现手动分页：" + " | ".join(h.strip()[:60] for h in hard))
+
     if a.expect_print:
         pj = os.path.join(run_dir, "print.json")
         data = {}

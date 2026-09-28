@@ -9,7 +9,7 @@
 请按本会话系统提示中的「作业契约」（`prompts/CONTRACT.md`）完成：
 
 1. 读 `{{RUN_DIR}}/due.json`（每个词带 `src` 字段：`new`=新词，`review`=到期复习）
-2. 写 `{{RUN_DIR}}/article.json`（标题 + slug + 段落数组 + 全部目标词的中文 gloss）
+2. 写 `{{RUN_DIR}}/article.json`（标题 + slug + 英文段落数组 + **与段落一一对应的中文译文** + 全部目标词的中文 gloss）
 3. 自检：`./bin/selfcheck.sh {{RUN_DIR}}`
 4. 报缺词 / 编译错就修正后重试，最多 3 次
 5. 结束时一句话说明结果

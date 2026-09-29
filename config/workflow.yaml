@@ -14,9 +14,11 @@ study_record: true       # 打印成功后记录「学了一遍」= 写 FSRS 卡
                          # 之后由 FSRS 到期时间把词推进「到期复习」，与新词一起印
 study_rating: good       # 记录时的打分：good（认真过了一遍，无错）/ easy（很轻松，隔得久）/
                          # hard / again（第一次复习很快再见面）
-advance_index: false     # 是否像 App 完成学习任务那样推进 lastLearnIndex。默认 false：
-                         # 卡片本身就是「已学」标记，fetch_new 会跳过有卡片的词，不会重复推新词；
-                         # 而推进进度可能与 App 自己完成学习任务时重复推进（跳过 20 个词）
+advance_index: true      # 是否像 App 完成学习任务那样推进 lastLearnIndex。true（2026-09-30 起默认）：
+                         # 目标 = 「本批新词最大 index + 1」（App 语义=下一个新词的下标），
+                         # 于是 App/浏览器的「今日新词」窗口正好从下一批要打印的词开始（闭环）。
+                         # 卡片本身也是「已学」标记（fetch_new 会跳过有卡片的词），游标只为对齐窗口；
+                         # 服务端进度只增不回退，与用户自己在浏览器里练不会互相打回。详见 README「已知坑」。
 exclude_known: true      # 已掌握的词不再进讲义（新词与到期词都跳过）
 print_retries: 2         # 收不到打印机回执时重发次数
 

@@ -106,7 +106,7 @@ print: true            # 生成后推送打印
 mark_known: false      # 打印后是否标已掌握 —— 永远保持 false（标 known 会把词从新词池永久剔除）
 study_record: true     # 打印成功 = 学了一遍 → 写 FSRS 卡进复习调度
 study_rating: good     # 记录打分：good/easy/hard/again（App 是同一套 ts-fsrs）
-advance_index: false   # 是否像 App 那样推进 lastLearnIndex（默认 false，避免与 App 重复推进）
+advance_index: true   # 是否推进 lastLearnIndex（默认 true = 与 App 的「今日新词」窗口闭环）
 exclude_known: true    # 跳过已 known 的词（新词与到期词都跳过）
 print_retries: 2       # 收不到回执时重发次数
 print_ack_timeout: 45  # 等回执秒数（无回执不算失败，只记 ack:null）
@@ -123,10 +123,12 @@ pi: {provider: qwen-maas, model: deepseek-v4.1-flash, thinking: low, attempts: 2
 - **「学了一遍」怎么落地**：App 学一个词时执行 `store.fsrsData[word] = new FSRS(store.fsrsParameters).next(card ?? createEmptyCard(), now, grade).card`（源码 `_id_-C3R0jkHo.mjs` / `useWordCollectPicker.mjs`）。本仓库用**同一个** `ts-fsrs@5`（`tools/fsrs/next.mjs`，参数直接读服务端 `setting.fsrsParameters`），把讲义里的词一次性写进 dict store 的 `fsrsData` —— 于是这些词有了下次到期时间，App / 服务端的 `filter=due` 之后就会把它们推回来复习。
 - **写回方式（2026-09 ops 引擎上线后）**：`POST /api/ops`，body `{"scope":"dict","ops":[{opId, kind:"word.fsrs.set", payload:{word, card}, baseRevision, origin:"agent"}]}` —— 每词一个 op、唯一 `opId`、提交时看到的最新 `baseRevision`；服务端按「操作」记账（`revision` 全局单调递增 + 乐观并发），响应里的 `applied` / `conflicts` 逐条说明结果。**不再用 `PUT /api/data/dict`**：那是整文档覆盖（危险操作），既要拉 1.4MB 读改写、又会与用户正在练习的浏览器互相覆盖、还会广播一次「文档替换」让所有在线客户端重载。`twlib.put_store()` 现在只留给显式导入/恢复，日常写操作走 `twlib.ops_submit()` / `make_op()`。
 - **`word.fsrs.set` 必须传完整卡片**（是整体替换，不是合并）：只传 `{due, state}` 会把服务端卡片的 `stability`/`difficulty`/`reps`/`last_review` 全冲掉。卡片从 `GET /api/export` 的 `dict.val.fsrsData[word]` 读全了再改。
-- **`baseRevision` 落后会拦住一切**（实测连 no-op 都判 `ENTITY_MODIFIED`）：写前先 `twlib.current_revision()`（= `GET /api/ops?since=999999999`，不返回日志、最省流量）。`study_record.py` 遇到冲突会重取 revision、换新 `opId` 重投一次，仍失败就把该 op 记进 `verify_errors` 让整轮失败报警 —— 不静默覆盖用户刚在 App 里的改动。
+- **`baseRevision` 的冲突规则（2026-09-30 对照服务端 `server/utils/commitOps.ts:223` 修正）**：只有「`baseRevision` 落后 **且** 该区间内**同一实体**被改过」才判 `ENTITY_MODIFIED`；同实体没被动过时旧 revision 也能应用。写前仍先 `twlib.current_revision()`（= `GET /api/ops?since=999999999`，不返回日志、最省流量）。`study_record.py` 遇到冲突会重取 revision、换新 `opId` 重投一次，仍失败就把该 op 记进 `verify_errors` 让整轮失败报警 —— 不静默覆盖用户刚在 App 里的改动。
 - **写响应必须检查 `conflicts`**，不能只看 HTTP 状态码：写了不支持的 kind 也返回 **200**，但 `applied` 为空、`conflicts[].reason = "UNKNOWN_KIND"`。
-- **写后复核不靠整文档回读了**：`GET /api/ops?since=<写前 revision>` 比对 op 日志里实际落库的卡片，再逐词 `GET /api/words/{word}`（实测 ~60ms/词）比对 `fsrs.due`/`fsrs.state`；`GET /api/words?filter=due` 只用来拿「已有卡片的 key 大小写」（写错大小写会多出一张卡）。
-- **新词不重复推**：`fetch_new.py` 会跳过**已有 FSRS 卡**的词（= 已经学过的），所以即使 `lastLearnIndex` 不动，新词也会按天自然推进；`advance_index: true` 才像 App 那样显式推进进度。
+- **写卡要「带着旧卡续排」**（2026-09-30 修正，重要）：App 打分是 `new FSRS(params).next(store.fsrsData[word] ?? createEmptyCard(), now, grade)`。所以给**已有卡**的词写回时若传空卡，会把它当新卡：`state` 退回 Learning、`reps` 归 1、`stability` 清零（实测 20 张 state=2 的卡被打回 `state=1/reps=1/scheduled_days=0`，等于抹掉浏览器练出来的历史）。`study_record.py` 现在先 `GET /api/export` → `dict.val.fsrsData[word]` 读**完整旧卡**再续排；结果里用 `cards_reused` / `cards_new` 说明每个词走的是哪条路。
+- **游标推进按 index 对齐**（2026-09-30 修正）：`lastLearnIndex` 是**下标**（「下一个新词的下标」，`Statistics.vue` 用 `learned: lastLearnIndex` 显示、进度 = `lastLearnIndex / length`），不是卡片数。App 学完一组会 `lastLearnIndex += 新词数` 并作为 `dict.progress.set` 提交（`usePracticeWordSession.ts:262/:302`）。所以 `advance_index: true` 时目标取「本批新词**最大 index + 1**」（例：20 → 120）；按「当前 + 词数」累加会错位，表现为浏览器把已打印的词又当新词练一遍。服务端进度只增不回退，与用户自己练不会互相打回。
+- **写后复核不靠整文档回读了**：`GET /api/ops?since=<写前 revision>` 比对 op 日志里实际落库的卡片；卡片复核走 `GET /api/export` 的 `dict.val.fsrsData`（`GET /api/words/{word}` 的 `fsrs` 字段实测**已写卡的词也返回 null**，不要用它判卡片）。
+- **新词不重复推**：`fetch_new.py` 会跳过**已有 FSRS 卡**的词（= 已经学过的），所以即使 `lastLearnIndex` 不动，新词也会按天自然推进；`advance_index: true` 则额外像 App 那样把进度游标推到「下一个新词的下标」，让 App/浏览器的「今日新词」窗口与下一批讲义对齐（2026-09-30 起默认开启）。
 - **`known` 与 FSRS 是两套数据**：`exclude_known` 让两类词集都跳过已掌握的词。
 - **「今日新词」的算法来源**：`useWordCollectPicker.mjs` 的 `getCurrentStudyWord()` —— 从 `book.lastLearnIndex` 起、跳过 ignore 集（`known` ∪ `simpleWords`，`setting.ignoreSimpleWord=false` 时只用 `known`）、取满 `perDayStudyNumber` 个；`lastLearnIndex >= length-1` 时视为学完（无新词）。`bin/fetch_new.py` 与它逐条对齐；词书全量词条可从 `GET /api/export` 的 `dict.val.word.bookList[studyIndex]` 取到（含音标/释义/例句，无需逐词请求）。
 - **pi 的作业契约**放在 `prompts/CONTRACT.md`（由 `--append-system-prompt` 注入），不使用 `AGENTS.md`。

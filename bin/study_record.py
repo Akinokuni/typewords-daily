@@ -16,9 +16,17 @@
 .next(card ?? createEmptyCard(), now, grade).card），参数直接读服务端保存的 setting，
 打分默认 good（= 今天认真过了一遍，无错误；见 config/workflow.yaml 的 study_rating）。
 
+打分区沿用现有卡片（2026-09-30 修正，此前一律传 None）：写卡前先读服务端现有 fsrsData，把**已有卡片**
+交给 ts-fsrs 续排（App 亦如此：`store.fsrsData[word] ?? createEmptyCard()`）。传 None 会把复习词
+当新卡处理（state 退回 Learning、stability/reps 清零），等于抹掉历史。
+
+推进游标按「本批新词最大 index + 1」（2026-09-30 修正，此前按词数累加）：App 里 lastLearnIndex 的
+语义是「下一个新词的下标」（usePracticeWordSession.ts:262 `lastLearnIndex += 练习的新词数`），
+所以必须按 index 对齐；按词数累加会与 App 的新词窗口错位（表现为浏览器把已打印过的词当新词再练一遍）。
+
 用法: study_record.py --run-dir DIR [--rating good] [--dry-run] [--advance-index] [--force]
 输出 JSON（单行）: {ok, mode, rating, words[], rated[], revision, ops_applied, conflicts[],
-                   next_due{min,max,per_word}, verify_errors[], advanced, skipped, dry_run}
+                   cards_reused, next_due{min,max,per_word}, verify_errors[], advanced, skipped, dry_run}
 """
 import argparse
 import datetime
@@ -61,13 +69,29 @@ def fsrs_params():
     return DEFAULT_PARAMS, "default"
 
 
-def existing_card_keys(names):
-    """已有卡片的词要沿用**服务端那个 key 的大小写**（App 也这么做），否则会写出第二张卡。
+def existing_cards(names):
+    """取**服务端现有卡片（整卡）** + 对齐 key 大小写（App 也按 fsrsData 的实际 key 写，否则会多出一张卡）。
 
-    只查「到期复习」列表就够了：新词由 fetch_new 保证「本来没卡」（已有卡的词会被跳过），
-    复习词则一定在 due 列表里 —— 这样省下每次拉 1.4MB 整份 dict 文档的开销。
-    查不到就退回小写（实测线上 fsrsData 的 key 全是小写）。
+    一次 /api/export 拿全量（实测 1.3MB / 1.4s/天，可接受），换来两件事：
+      1) 卡片续排：把已有卡交给 ts-fsrs，复习词的下次到期从历史推算（传 None 会清零历史）；
+      2) key 大小写与线上一致（实测全是小写，但沿用实际 key 更稳）。
+    export 不可用时退回 /words?filter=due（只对齐 key，卡片按空卡算，并在日志里告警）。
+    返回 {word: (server_key, card_or_None)}
     """
+    cards, keys = {}, {}
+    try:
+        d = T.api_get("/export", timeout=180) or {}
+        root = d.get("dict") if isinstance(d.get("dict"), dict) else d
+        fsrs = ((root or {}).get("val") or {}).get("fsrsData") or {}
+        for k, c in fsrs.items():
+            if isinstance(c, dict) and c.get("due"):
+                cards[str(k).lower()] = c
+                keys[str(k).lower()] = str(k)
+    except Exception as e:
+        print(f"WARN export unavailable: {e!r}", file=sys.stderr)
+    if cards:
+        return {w: (keys.get(w.lower(), w.lower()), cards.get(w.lower())) for w in names}
+
     m = {}
     try:
         d = T.api_get("/words?filter=due&limit=1000", timeout=60) or {}
@@ -77,7 +101,8 @@ def existing_card_keys(names):
                 m[w.lower()] = w
     except Exception as e:
         print(f"WARN due list unavailable: {e!r}", file=sys.stderr)
-    return {w: m.get(w.lower(), w.lower()) for w in names}
+    print("WARN 现有卡片不可得（export 失败）：按空卡打分，复习历史可能被清零", file=sys.stderr)
+    return {w: (m.get(w.lower(), w.lower()), None) for w in names}
 
 
 def next_cards(items, params, rating, now_iso):
@@ -94,7 +119,12 @@ def next_cards(items, params, rating, now_iso):
 
 
 def plan_advance(words, result):
-    """算好 lastLearnIndex 目标（像 App 完成学习任务那样推进；默认不启用）。"""
+    """算好 lastLearnIndex 目标（像 App 完成学习任务那样推进；默认不启用）。
+
+    目标是「本批新词的最大 index + 1」= App 语义里的「下一个新词的下标」，
+    这样 App 的取新词窗口正好从下一批要打印的词开始（闭环）。
+    缺少 index 时才退回「当前 + 新词数」（旧行为，可能与 App 窗口错位）。
+    """
     ov = T.api_get("/overview", timeout=30) or {}
     cd = ov.get("currentDict") or {}
     if not cd.get("id"):
@@ -102,11 +132,20 @@ def plan_advance(words, result):
         return None
     length = int(cd.get("length") or 0)
     before = int(cd.get("lastLearnIndex") or 0)
+    new_idx = [int(w["index"]) for w in words
+               if str(w.get("src", "new")) == "new" and isinstance(w.get("index"), int) and w["index"] >= 0]
     by = sum(1 for w in words if str(w.get("src", "new")) == "new")
-    after = min(before + by, length)
+    if new_idx:
+        mode = "index"
+        raw = max(new_idx) + 1
+    else:
+        mode = "count"
+        raw = before + by
+    after = min(raw, length) if length else raw
     return {"dictKey": cd["id"], "book": cd.get("name") or cd.get("id"),
-            "from": before, "to": after, "by": by, "length": length,
-            "complete": bool(after >= length - 1 and length != 1)}
+            "from": before, "to": after, "by": by, "length": length, "mode": mode,
+            "new_index_max": max(new_idx) if new_idx else None,
+            "complete": bool(length and after >= length - 1 and length != 1)}
 
 
 def submit(ops, result):
@@ -206,6 +245,7 @@ def main():
     names = [w["word"] for w in words]
     result = {"ok": False, "mode": "ops", "rating": a.rating, "words": names, "rated": [],
               "revision": None, "ops_applied": 0, "conflicts": [], "retried": 0,
+              "cards_reused": [], "cards_new": [],
               "next_due": {}, "verify_errors": [], "advanced": None,
               "skipped": False, "dry_run": a.dry_run, "fsrs_version": None,
               "params_source": None, "log_verify": None}
@@ -228,12 +268,17 @@ def main():
 
     params, src = fsrs_params()
     result["params_source"] = src
-    key_for = existing_card_keys(names)
+    ec = existing_cards(names)
+    key_for = {w: v[0] for w, v in ec.items()}
+    card_in = {w: v[1] for w, v in ec.items()}
     result["card_keys"] = key_for
+    result["cards_reused"] = sorted(w for w, c in card_in.items() if c)
+    result["cards_new"] = sorted(w for w, c in card_in.items() if not c)
 
     now = datetime.datetime.now(datetime.timezone.utc)
     now_iso = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    out = next_cards([[key_for[w], None] for w in names], params, a.rating, now_iso)
+    # 已有卡 → 交给 ts-fsrs 续排；没有才当新卡（与 App 的 fsrsData[word] ?? createEmptyCard() 一致）
+    out = next_cards([[key_for[w], card_in[w]] for w in names], params, a.rating, now_iso)
     result["fsrs_version"] = out.get("version")
 
     cards = {}
@@ -258,7 +303,7 @@ def main():
     if a.dry_run:
         result["ok"] = not result["verify_errors"]
         result["note"] = f"dry-run：本会提交 {len(cards)} 个 word.fsrs.set" + \
-                         (" + 1 个 dict.progress.set" if advance else "")
+                         (" + 1 个 dict.progress.set" if advance and advance["to"] > advance["from"] else "")
         result["advanced"] = advance
         dues = sorted(result["next_due"].values())
         result["next_due"] = {"min": dues[0] if dues else None, "max": dues[-1] if dues else None,
@@ -266,27 +311,32 @@ def main():
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["ok"] else 1
 
-    # 写前取最新 revision：baseRevision 落后会被判冲突（实测连 no-op 都拦）
+    # 写前取最新 revision 作基准；只有「同实体在本批开始前被别人改过」才会被判冲突
+    # （服务端 commitOps.ts:223 的判定：baseRevision 落后 + 实体域相交）
     rev0 = T.current_revision()
     result["base_revision"] = rev0
     ops = [T.make_op("word.fsrs.set", {"word": key_for[w], "card": cards[w]}, rev0, client_ts=now_iso)
            for w in cards]
-    if advance:
+    do_advance = bool(advance and advance["to"] > advance["from"])
+    if do_advance:
         ops.append(T.make_op("dict.progress.set",
                              {"dictKey": advance["dictKey"], "lastLearnIndex": advance["to"],
                               "complete": advance["complete"]},
                              rev0, client_ts=now_iso))
+    elif advance:
+        advance["skipped_reason"] = "目标未超过当前进度（服务端进度只增不回退），不提交进度 op"
     submit(ops, result)
     result["advanced"] = advance
 
     verify_via_log(rev0, cards, key_for, result)
     verify_via_words(cards, result)
-    if advance:
+    if do_advance:
         try:
             p = T.api_get("/dicts/" + urllib.parse.quote(advance["dictKey"]) + "/progress", timeout=30) or {}
-            if int(p.get("lastLearnIndex") or 0) != advance["to"]:
+            got = int(p.get("lastLearnIndex") or 0)
+            if got < advance["to"]:
                 result["verify_errors"].append(
-                    f"lastLearnIndex 未推进: {p.get('lastLearnIndex')} != {advance['to']}")
+                    f"lastLearnIndex 未推进: {got} < {advance['to']}")
         except Exception as e:
             result["verify_errors"].append(f"advance-index 回读失败 {e!r}")
 

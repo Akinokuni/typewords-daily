@@ -13,8 +13,34 @@ AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ---------------- API ----------------
 
+def api_token():
+    """TypeWords 的 API_TOKEN：优先环境变量 TW_API_TOKEN，其次 config/api_token 文件。
+
+    服务端没启用 API_TOKEN 时为空字符串（当前线上就是这样）；启用后除 /api/health 与
+    /api/data/*、/api/ops* 之外的接口都需要 `Authorization: Bearer <token>`，缺失会返回 401。
+    """
+    tok = (os.environ.get("TW_API_TOKEN") or "").strip()
+    if tok:
+        return tok
+    try:
+        with open(os.path.join(AGENT_DIR, "config", "api_token"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def headers(extra=None):
+    h = {"Content-Type": "application/json"}
+    tok = api_token()
+    if tok:
+        h["Authorization"] = "Bearer " + tok
+    h.update(extra or {})
+    return h
+
+
 def api_get(path, timeout=30):
-    with urllib.request.urlopen(API + path, timeout=timeout) as r:
+    req = urllib.request.Request(API + path, headers=headers(), method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
 
@@ -22,7 +48,7 @@ def api_post(path, payload, timeout=30):
     req = urllib.request.Request(
         API + path,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers(),
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -33,7 +59,7 @@ def api_put(path, payload, timeout=30):
     req = urllib.request.Request(
         API + path,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers(),
         method="PUT",
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -44,6 +70,9 @@ def get_store(key, timeout=60):
     """读回 TypeWords 服务端存储的某个 store（'dict'/'setting'/'practice_word'）。
 
     返回 (envelope, value)：envelope = {"val":..., "version":..., "updated_at":...}
+
+    注意：dict 文档实测 ~1.4MB / ~2s，日常只读 setting 就够了；需要全量词表时优先想清楚
+    是不是真的要拉这 1.4MB（新词算法确实需要，见 fetch_new.py）。
     """
     raw = api_get(f"/data/{key}", timeout=timeout) or {}
     envelope = json.loads(raw.get("value") or "{}")
@@ -51,8 +80,49 @@ def get_store(key, timeout=60):
 
 
 def put_store(key, envelope, timeout=60):
-    """把 envelope 写回服务端（value 字段是 JSON 字符串，与 App 的 dataSync 一致）。"""
+    """⚠️ 危险：整文档覆盖写入（value 字段是 JSON 字符串，与 App 的 dataSync 一致）。
+
+    2026-09 起服务端有了 ops 引擎，日常修改走 ops_submit() / make_op()，
+    这个函数只保留给「显式导入/恢复」用：它会替换整份数据、广播一次「文档替换」，
+    让所有在线客户端（含用户正在练习的浏览器）重载，且与用户改动互相覆盖。
+    """
     return api_put(f"/data/{key}", {"value": json.dumps(envelope, ensure_ascii=False)}, timeout=timeout)
+
+
+def current_revision(timeout=30):
+    """只取当前全局 revision（since 超过当前值不会返回日志，最省流量）。"""
+    d = api_get("/ops?since=999999999", timeout=timeout) or {}
+    return int(d.get("revision") or 0)
+
+
+def ops_submit(ops, scope="dict", timeout=120):
+    """提交一批 op → (http_status, 响应 dict)。返回 {"revision","applied","conflicts"}。"""
+    st, body = api_post("/ops", {"scope": scope, "ops": ops}, timeout=timeout)
+    try:
+        parsed = json.loads(body or "{}")
+    except Exception:
+        parsed = {"raw": (body or "")[:500]}
+    return st, parsed
+
+
+def new_op_id(tag="agent"):
+    """全局唯一 opId（服务端按它幂等去重：同 opId 重投不会产生第二次变更）。"""
+    import secrets
+    import time
+    return f"{tag}-{int(time.time() * 1000)}-{secrets.token_hex(4)}"
+
+
+def make_op(kind, payload, base_revision, op_id=None, origin="agent", client_ts=None):
+    """构造一个提交单元。
+
+    base_revision 必须是「提交方看到的最后修订号」：落后且同一实体已被别人改过 → ENTITY_MODIFIED
+    （实测连 no-op 都会被拦），所以写前先 current_revision()。
+    """
+    op = {"opId": op_id or new_op_id(), "kind": kind, "payload": payload,
+          "baseRevision": int(base_revision), "origin": origin}
+    if client_ts:
+        op["clientTs"] = client_ts
+    return op
 
 
 def load_workflow(path=None):

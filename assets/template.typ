@@ -12,6 +12,10 @@
 /// `base` 是英文正文，`rt` 是上方的中文注音或释义。旁注使用思源黑体
 /// 5.5pt、luma(120)，正文使用 9.5pt 强壮衬线体、纯黑。`weight` 可传入
 /// `"bold"` 来标记生词。
+///
+/// 中文旁注用 `pdf.artifact(kind: "layout")` 标记为版式装饰。它照常显示，
+/// 但不属于文档内容，因此屏幕阅读器和遵循 PDF 标签的朗读器只朗读英文，
+/// 不会顺带朗读中文。这是有意设置，不要移除该标记。
 #let ruby(base, rt, weight: "regular") = {
   // 不手工设置 box 的百分比基线。默认 auto 会继承网格末行英文文本的
   // 实际字体基线，使带 Ruby 的单词与同一行普通英文精确对齐。
@@ -20,7 +24,10 @@
       columns: 1,
       align: center + bottom,
       row-gutter: 0.15em,
-      text(font: ruby-font, size: 5.5pt, fill: luma(120), weight: "regular")[#rt],
+      pdf.artifact(
+        kind: "layout",
+        text(font: ruby-font, size: 5.5pt, fill: luma(120), weight: "regular")[#rt],
+      ),
       text(font: english-font, size: 9.5pt, fill: luma(0), weight: weight)[#base],
     ),
   )
